@@ -1,13 +1,43 @@
 # Python-generated files
 __pycache__/
 *.py[oc]
+*.pyo
 build/
 dist/
 wheels/
-*.egg-info
+*.egg-info/
+*.egg
 
 # Virtual environments
-.venv
+.venv/
+venv/
+env/
+
+# UV / pip
+# uv.lock is tracked — do NOT ignore
 
 # Local environment (contains real credentials)
 .env
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# SQLite databases (catch stray test DBs)
+sprint_data.db
+
+# Mypy / ruff cache
+.mypy_cache/
+.ruff_cache/
