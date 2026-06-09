@@ -12,3 +12,8 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.16",
+]
