@@ -35,14 +35,14 @@ jira-gitlab-report/
 
 For each ticket within `--start-date` … `--end-date`:
 
-| Step | Condition | Flag | Points |
-|------|-----------|------|--------|
-| 1 | No events in range | `untouched` | 0 |
-| 2 | No gate event + Not Done | `in-flight` | 0 |
-| 2 | No gate event + Done | `no-gate` | 0 |
-| 3 | Regression after last gate | `regressed` | 0 |
-| 4 | Final status is Done | `valid` | ticket points |
-| 5 | Worked on, not Done | `in-flight` | 0 |
+| Step | Condition                  | Flag        | Points        |
+|------|----------------------------|-------------|---------------|
+| 1    | No events in range         | `untouched` | 0             |
+| 2    | No gate event + Not Done   | `in-flight` | 0             |
+| 2    | No gate event + Done       | `no-gate`   | 0             |
+| 3    | Regression after last gate | `regressed` | 0             |
+| 4    | Final status is Done       | `valid`     | ticket points |
+| 5    | Worked on, not Done        | `in-flight` | 0             |
 
 **Gate events** = `code_review_approved` or `mr_merged`.
 **Regression** = `reopened` or `returned_to_progress` after the last gate.

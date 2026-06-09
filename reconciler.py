@@ -54,6 +54,7 @@ class TicketVerdict:
     final_status: str
     points: float
     flag: str  # 'valid', 'in-flight', 'regressed', 'no-gate', 'not-done', 'untouched'
+    regression_count: int = 0
     detail: str = ""
 
 
@@ -77,6 +78,10 @@ class SprintReport:
     @property
     def regressed_count(self) -> int:
         return sum(1 for t in self.tickets if t.flag == "regressed")
+
+    @property
+    def total_regressions(self) -> int:
+        return sum(t.regression_count for t in self.tickets)
 
     @property
     def valid_count(self) -> int:
@@ -158,6 +163,10 @@ class Reconciler:
 
         final_status = self._resolve_status_at(timeline, end_date)
         points = self._extract_points(timeline)
+
+        # Count ALL regression events in range (total insight, not just post-gate)
+        total_regressions = sum(1 for e in range_events if e["event_type"] in REGRESSION_EVENTS)
+
         last_gate = self._find_last_gate(range_events)
 
         if last_gate is None:
@@ -169,6 +178,7 @@ class Reconciler:
                     final_status=final_status,
                     points=0.0,
                     flag="no-gate",
+                    regression_count=total_regressions,
                     detail="Done but no code-review-approved or mr-merged event found in period.",
                 )
             return TicketVerdict(
@@ -177,13 +187,14 @@ class Reconciler:
                 final_status=final_status,
                 points=0.0,
                 flag="in-flight",
+                regression_count=total_regressions,
                 detail=f"Worked on (final: '{final_status}') but no review/merge gate reached.",
             )
 
-        regression_after_gate = any(
-            e["event_type"] in REGRESSION_EVENTS and e["event_ts"] >= last_gate["event_ts"]
-            for e in range_events
-        )
+        regression_after_gate = [
+            e for e in range_events
+            if e["event_type"] in REGRESSION_EVENTS and e["event_ts"] >= last_gate["event_ts"]
+        ]
         if regression_after_gate:
             return TicketVerdict(
                 ticket_id=ticket_id,
@@ -191,7 +202,8 @@ class Reconciler:
                 final_status=final_status,
                 points=0.0,
                 flag="regressed",
-                detail=f"Reopen/return-to-progress after {last_gate['event_type']} at {last_gate['event_ts']}.",
+                regression_count=total_regressions,
+                detail=f"{len(regression_after_gate)} regression(s) after last gate ({total_regressions} total).",
             )
 
         if final_status.lower() in (s.lower() for s in ALL_DONE_STATUSES):
@@ -201,6 +213,7 @@ class Reconciler:
                 final_status=final_status,
                 points=points,
                 flag="valid",
+                regression_count=total_regressions,
                 detail=f"Gate passed: {last_gate['event_type']} at {last_gate['event_ts']}.",
             )
 
@@ -210,6 +223,7 @@ class Reconciler:
             final_status=final_status,
             points=0.0,
             flag="in-flight",
+            regression_count=total_regressions,
             detail=f"Worked on but final status is '{final_status}' — not a done state.",
         )
 
@@ -229,10 +243,11 @@ class Reconciler:
 
     @staticmethod
     def _extract_points(timeline: list[dict]) -> float:
+        """Return the most recent story-point value (last assigned wins)."""
         pts = 0.0
         for e in timeline:
             if e["event_type"] == "points_assigned":
-                pts += e.get("points", 0.0)
+                pts = e.get("points", 0.0)
         return pts
 
     @staticmethod

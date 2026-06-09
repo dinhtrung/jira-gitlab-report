@@ -119,30 +119,40 @@ async def fetch_gitlab_data(
         return 0
 
     total = 0
-    for mr_summary in mrs:
+    semaphore = asyncio.Semaphore(8)  # max concurrent MR detail fetches
+
+    async def _fetch_one_mr(mr_summary: dict) -> int:
         mr_iid = mr_summary.get("iid")
         if not mr_iid:
-            continue
+            return 0
         pid = mr_summary.get("project_id", project_id)
-
         detail_args: dict = {"merge_request_iid": mr_iid}
         if pid:
             detail_args["project_id"] = pid
 
-        detail = await gitlab.call_tool(detail_tool, detail_args)
+        async with semaphore:
+            detail = await gitlab.call_tool(detail_tool, detail_args)
+
         if detail.is_error:
             logger.warning("GitLab detail error for !%s: %s", mr_iid, detail.content)
             db.parse_and_ingest_gitlab_mr_events([mr_summary], project_id=pid)
-            total += 1
-            continue
+            return 1
 
         full_mr = _extract_json(detail.content)
         if isinstance(full_mr, dict):
             db.parse_and_ingest_gitlab_mr_events([full_mr], project_id=pid)
-            total += 1
-        elif isinstance(full_mr, list):
+            return 1
+        if isinstance(full_mr, list):
             db.parse_and_ingest_gitlab_mr_events(full_mr, project_id=pid)
-            total += len(full_mr)
+            return len(full_mr)
+        return 0
+
+    results = await asyncio.gather(*[_fetch_one_mr(mr) for mr in mrs], return_exceptions=True)
+    for r in results:
+        if isinstance(r, int):
+            total += r
+        elif isinstance(r, Exception):
+            logger.warning("GitLab fetch task failed: %s", r)
 
     logger.info("Ingested %d GitLab MRs", total)
     return total
@@ -184,6 +194,7 @@ def render_markdown(report: SprintReport) -> str:
         f"| **Valid (points earned)** | {report.valid_count} |",
         f"| **In-Flight (0 pts)** | {report.in_flight_count} |",
         f"| **Regressed (0 pts)** | {report.regressed_count} |",
+        f"| **░ Total regressions** | {report.total_regressions} |",
         f"| **Sprint Velocity** | **{report.total_points}** |",
         "",
         "---",

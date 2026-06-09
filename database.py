@@ -34,6 +34,8 @@ GATE_TRANSITIONS = {
     "merged",
     "mr merged",
 }
+# Jira field names that carry story-point estimates.
+POINTS_FIELD_NAMES = {"story points", "story point estimate", "estimate", "effort"}
 
 
 class Database:
@@ -209,27 +211,36 @@ class Database:
         """
         count = 0
         self.conn.execute("DELETE FROM ticket_history")
+        # --- Jira ---
         rows = self.conn.execute(
             "SELECT * FROM raw_jira_events ORDER BY issue_key, timestamp"
         ).fetchall()
         for r in rows:
             etype, old_s, new_s = _classify_jira_event(r["field"], r["from_value"], r["to_value"])
+            pts = 0.0
+            if etype == "points_assigned" and new_s:
+                try:
+                    pts = float(new_s)
+                except (ValueError, TypeError):
+                    pass
             self.conn.execute(
                 """INSERT INTO ticket_history
                    (ticket_id, source, event_type, old_status, new_status,
                     points, sprint_name, author, event_ts)
-                   VALUES (?, 'jira', ?, ?, ?, 0, ?, ?, ?)""",
+                   VALUES (?, 'jira', ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     r["issue_key"],
                     etype,
                     old_s,
                     new_s,
+                    pts,
                     r["sprint_name"],
                     r["author"],
                     r["timestamp"],
                 ),
             )
             count += 1
+        # --- GitLab ---
         rows = self.conn.execute(
             "SELECT * FROM raw_gitlab_events ORDER BY mr_iid, timestamp"
         ).fetchall()
@@ -346,6 +357,9 @@ def _classify_jira_event(
         return ("status_change", from_s, to_s)
     if field_l == "issuetype":
         return ("created", None, to_s)
+    # Story-points field changes
+    if any(pat in field_l for pat in POINTS_FIELD_NAMES) and to_val is not None:
+        return ("points_assigned", from_s, to_s)
     return ("status_change", from_s, to_s)
 
 
