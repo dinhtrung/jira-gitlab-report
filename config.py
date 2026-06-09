@@ -19,6 +19,7 @@ import os
 # Jira status vocabulary
 # ---------------------------------------------------------------------------
 
+
 def _csv_set(var: str, default: set[str]) -> set[str]:
     """Parse env var as comma-separated set; fall back to *default*."""
     raw = os.getenv(var)

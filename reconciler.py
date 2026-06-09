@@ -292,9 +292,7 @@ class Reconciler:
                 t1 = datetime.fromisoformat(end_date)
                 delta_h = (t1 - t0).total_seconds() / 3600.0
                 if delta_h > 0:
-                    status_duration[last_status] = (
-                        status_duration.get(last_status, 0.0) + delta_h
-                    )
+                    status_duration[last_status] = status_duration.get(last_status, 0.0) + delta_h
             except (ValueError, TypeError):
                 pass
 

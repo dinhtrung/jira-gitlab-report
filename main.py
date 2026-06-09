@@ -231,10 +231,34 @@ def render_csv(report: SprintReport) -> str:
 
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["#", "Ticket", "Source", "Final Status", "Points", "Flag", "Regressions", "Cycle Time", "Detail"])
+    w.writerow(
+        [
+            "#",
+            "Ticket",
+            "Source",
+            "Final Status",
+            "Points",
+            "Flag",
+            "Regressions",
+            "Cycle Time",
+            "Detail",
+        ]
+    )
     for idx, t in enumerate(report.tickets, start=1):
         ct = "; ".join(f"{s}:{h:.1f}h" for s, h in sorted(t.cycle_time_hours.items()))
-        w.writerow([idx, t.ticket_id, t.source, t.final_status, t.points, t.flag, t.regression_count, ct, t.detail])
+        w.writerow(
+            [
+                idx,
+                t.ticket_id,
+                t.source,
+                t.final_status,
+                t.points,
+                t.flag,
+                t.regression_count,
+                ct,
+                t.detail,
+            ]
+        )
     w.writerow([])
     w.writerow(["Summary", "Value"])
     w.writerow(["Total tickets", len(report.tickets)])
