@@ -1,6 +1,8 @@
 # docker-compose.yml — Mock Jira & GitLab MCP servers for local sprint reporting.
 #
-# Bring up:
+# Quick start:
+#   cp .env.sample .env
+#   # edit .env with real credentials
 #   docker compose up -d
 #
 # Test SSE endpoint:
@@ -11,7 +13,6 @@
 #   python main.py --start-date 2025-04-01 --end-date 2025-04-14
 
 services:
-
   # ------------------------------------------------------------------
   # Jira MCP — https://github.com/sooperset/mcp-atlassian
   # SSE transport on port 8080, 72 tools available.
@@ -22,11 +23,12 @@ services:
     container_name: jira-mcp
     ports:
       - "8080:9000"
+    env_file: .env
     environment:
-      # -- Atlassian credentials (redacted) --
-      JIRA_URL:             "https://CHANGE_ME.atlassian.net"
-      JIRA_USERNAME:        "CHANGE_ME@example.com"
-      JIRA_API_TOKEN:       "CHANGE_ME"
+      # Credentials — loaded from .env, CHANGE_ME fallback if missing.
+      JIRA_URL: "${JIRA_URL:-https://CHANGE_ME.atlassian.net}"
+      JIRA_USERNAME: "${JIRA_USERNAME:-CHANGE_ME@example.com}"
+      JIRA_API_TOKEN: "${JIRA_API_TOKEN:-CHANGE_ME}"
       # Omit CONFLUENCE_* to keep only Jira tools.
     command:
       - "--transport=sse"
@@ -48,18 +50,19 @@ services:
     container_name: gitlab-mcp
     ports:
       - "8081:3002"
+    env_file: .env
     environment:
-      # -- GitLab credentials (redacted) --
-      GITLAB_PERSONAL_ACCESS_TOKEN: "CHANGE_ME"
-      GITLAB_API_URL:              "https://CHANGE_ME.gitlab.com/api/v4"
+      # Credentials — loaded from .env, CHANGE_ME fallback if missing.
+      GITLAB_PERSONAL_ACCESS_TOKEN: "${GITLAB_PERSONAL_ACCESS_TOKEN:-CHANGE_ME}"
+      GITLAB_API_URL: "${GITLAB_API_URL:-https://CHANGE_ME.gitlab.com/api/v4}"
       # -- Transport --
-      SSE:   "true"
-      HOST:  "0.0.0.0"
+      SSE: "true"
+      HOST: "0.0.0.0"
       # -- Toolset fine-tuning --
-      GITLAB_READ_ONLY_MODE: "true"   # Read-only = safe for reporting
-      USE_MILESTONE:         "true"   # Sprint / milestone data
-      USE_PIPELINE:          "true"   # CI/CD pipeline status
-      USE_GITLAB_WIKI:       "false"  # Not needed for sprint reports
+      GITLAB_READ_ONLY_MODE: "true" # Read-only = safe for reporting
+      USE_MILESTONE: "true" # Sprint / milestone data
+      USE_PIPELINE: "true" # CI/CD pipeline status
+      USE_GITLAB_WIKI: "false" # Not needed for sprint reports
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3002/sse || exit 1"]
