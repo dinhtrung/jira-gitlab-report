@@ -4,21 +4,21 @@ Tasks to improve the Deterministic Sprint Reporting Engine.
 
 ## High Priority (Accuracy & Speed)
 
-- [ ] **Fix Points Logic** (`reconciler.py::Reconciler._extract_points`)
+- [x] **Fix Points Logic** (`reconciler.py::Reconciler._extract_points`)
     - Currently sums all `points_assigned` events.
     - Should be changed to "last known value" at the end of the reporting period.
-- [ ] **Parallel GitLab Ingestion** (`main.py::fetch_gitlab_data`)
+- [x] **Parallel GitLab Ingestion** (`main.py::fetch_gitlab_data`)
     - Currently fetches MR details one-by-one ($N+1$ calls).
     - Use `asyncio.gather` with a semaphore to fetch events in parallel.
-- [ ] **Improve Jira Pagination Stability** (`main.py::fetch_jira_data`)
+- [x] **Improve Jira Pagination Stability** (`main.py::fetch_jira_data`)
     - Search pagination can skip issues if they move during the fetch.
     - Consider sorting by `key` or using a more robust pagination strategy if the MCP tool supports it.
 
 ## Medium Priority (Flexibility & Reliability)
 
-- [ ] **External Configuration**
+- [x] **External Configuration**
     - Move hardcoded Jira/GitLab statuses (`JIRA_DONE_STATUSES`, `REOPEN_WORDS`, `GATE_TRANSITIONS`, `POINTS_FIELD_NAMES` in `database.py`) to a `config.yaml` or `.env`.
-- [ ] **Add Regression Count** (`reconciler.py`, `database.py`)
+- [x] **Add Regression Count** (`reconciler.py`, `database.py`)
     - Instead of a binary `regressed` flag, track the actual count of reopen events after the last gate.
 - [ ] **Consistency in Log Formats**
     - Audit `logging` calls across all modules to ensure consistent metadata (timestamps, levels).
@@ -27,9 +27,9 @@ Tasks to improve the Deterministic Sprint Reporting Engine.
 
 ## Low Priority (Features & Refactoring)
 
-- [ ] **Cycle Time Metrics**
+- [x] **Cycle Time Metrics**
     - Calculate time spent in each state transition to provide "Average Time to Done".
-- [ ] **Alternative Output Formats**
+- [x] **Alternative Output Formats**
     - Add `--format csv` and `--format json` to `main.py`.
 - [ ] **Automated Tests**
     - Add a `tests/` directory with `pytest` for the `Reconciler` state machine and `Database` normalization.
