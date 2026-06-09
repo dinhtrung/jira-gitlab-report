@@ -319,7 +319,11 @@ def _pick_tool(available: set[str], candidates: list[str]) -> str:
 
 def _extract_json(content: list[dict]) -> Any:
     """Unpack an MCP tool call result into a Python object."""
+    if not isinstance(content, list):
+        return {}
     for block in content:
+        if not isinstance(block, dict):
+            continue
         if block.get("type") == "text":
             raw: str = block.get("text", "")
             if not raw:

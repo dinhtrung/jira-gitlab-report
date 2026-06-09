@@ -20,9 +20,9 @@ Tasks to improve the Deterministic Sprint Reporting Engine.
     - Move hardcoded Jira/GitLab statuses (`JIRA_DONE_STATUSES`, `REOPEN_WORDS`, `GATE_TRANSITIONS`, `POINTS_FIELD_NAMES` in `database.py`) to a `config.yaml` or `.env`.
 - [x] **Add Regression Count** (`reconciler.py`, `database.py`)
     - Instead of a binary `regressed` flag, track the actual count of reopen events after the last gate.
-- [ ] **Consistency in Log Formats**
+- [x] **Consistency in Log Formats**
     - Audit `logging` calls across all modules to ensure consistent metadata (timestamps, levels).
-- [ ] **Date/Time Zone Awareness**
+- [x] **Date/Time Zone Awareness**
     - Ensure all ISO-8601 strings are handled with consistent timezone awareness (UTC preferred) to avoid boundary issues.
 
 ## Low Priority (Features & Refactoring)
@@ -31,7 +31,7 @@ Tasks to improve the Deterministic Sprint Reporting Engine.
     - Calculate time spent in each state transition to provide "Average Time to Done".
 - [x] **Alternative Output Formats**
     - Add `--format csv` and `--format json` to `main.py`.
-- [ ] **Automated Tests**
+- [x] **Automated Tests**
     - Add a `tests/` directory with `pytest` for the `Reconciler` state machine and `Database` normalization.
 - [ ] **Sprint Auto-detection**
     - Attempt to discover the "Active" sprint from Jira if `--start-date` and `--end-date` are missing.
