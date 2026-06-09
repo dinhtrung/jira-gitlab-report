@@ -22,7 +22,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from database import JIRA_DONE_STATUSES, Database
+from config import JIRA_DONE_STATUSES
+from database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class TicketVerdict:
     points: float
     flag: str  # 'valid', 'in-flight', 'regressed', 'no-gate', 'not-done', 'untouched'
     regression_count: int = 0
+    cycle_time_hours: dict[str, float] = field(default_factory=dict)
     detail: str = ""
 
 
@@ -163,6 +165,7 @@ class Reconciler:
 
         final_status = self._resolve_status_at(timeline, end_date)
         points = self._extract_points(timeline)
+        cycle = self._calculate_cycle_time(timeline, start_date, end_date)
 
         # Count ALL regression events in range (total insight, not just post-gate)
         total_regressions = sum(1 for e in range_events if e["event_type"] in REGRESSION_EVENTS)
@@ -179,6 +182,7 @@ class Reconciler:
                     points=0.0,
                     flag="no-gate",
                     regression_count=total_regressions,
+                    cycle_time_hours=cycle,
                     detail="Done but no code-review-approved or mr-merged event found in period.",
                 )
             return TicketVerdict(
@@ -188,11 +192,13 @@ class Reconciler:
                 points=0.0,
                 flag="in-flight",
                 regression_count=total_regressions,
+                cycle_time_hours=cycle,
                 detail=f"Worked on (final: '{final_status}') but no review/merge gate reached.",
             )
 
         regression_after_gate = [
-            e for e in range_events
+            e
+            for e in range_events
             if e["event_type"] in REGRESSION_EVENTS and e["event_ts"] >= last_gate["event_ts"]
         ]
         if regression_after_gate:
@@ -203,6 +209,7 @@ class Reconciler:
                 points=0.0,
                 flag="regressed",
                 regression_count=total_regressions,
+                cycle_time_hours=cycle,
                 detail=f"{len(regression_after_gate)} regression(s) after last gate ({total_regressions} total).",
             )
 
@@ -214,6 +221,7 @@ class Reconciler:
                 points=points,
                 flag="valid",
                 regression_count=total_regressions,
+                cycle_time_hours=cycle,
                 detail=f"Gate passed: {last_gate['event_type']} at {last_gate['event_ts']}.",
             )
 
@@ -224,6 +232,7 @@ class Reconciler:
             points=0.0,
             flag="in-flight",
             regression_count=total_regressions,
+            cycle_time_hours=cycle,
             detail=f"Worked on but final status is '{final_status}' — not a done state.",
         )
 
@@ -240,6 +249,56 @@ class Reconciler:
             if e["new_status"]:
                 current = e["new_status"]
         return current
+
+    @staticmethod
+    def _calculate_cycle_time(
+        timeline: list[dict], start_date: str, end_date: str
+    ) -> dict[str, float]:
+        """Compute hours spent in each status within the date range."""
+        from datetime import datetime
+
+        status_duration: dict[str, float] = {}
+        last_ts: str | None = None
+        last_status: str | None = None
+
+        for e in timeline:
+            ts = e["event_ts"]
+            new_s = e.get("new_status")
+            if new_s is None:
+                continue
+
+            range_start = max(ts, start_date)
+
+            if last_ts is not None and last_status is not None:
+                range_end = min(ts, end_date)
+                try:
+                    t0 = datetime.fromisoformat(last_ts)
+                    t1 = datetime.fromisoformat(range_end)
+                    delta_h = (t1 - t0).total_seconds() / 3600.0
+                    if delta_h > 0:
+                        status_duration[last_status] = (
+                            status_duration.get(last_status, 0.0) + delta_h
+                        )
+                except (ValueError, TypeError):
+                    pass
+
+            last_ts = ts
+            last_status = new_s
+
+        # Handle the last known status → end_date
+        if last_ts is not None and last_status is not None:
+            try:
+                t0 = datetime.fromisoformat(last_ts)
+                t1 = datetime.fromisoformat(end_date)
+                delta_h = (t1 - t0).total_seconds() / 3600.0
+                if delta_h > 0:
+                    status_duration[last_status] = (
+                        status_duration.get(last_status, 0.0) + delta_h
+                    )
+            except (ValueError, TypeError):
+                pass
+
+        return status_duration
 
     @staticmethod
     def _extract_points(timeline: list[dict]) -> float:

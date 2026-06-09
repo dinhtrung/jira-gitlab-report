@@ -15,27 +15,17 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from config import (
+    GATE_TRANSITIONS,
+    JIRA_DONE_STATUSES,
+    POINTS_FIELD_NAMES,
+    REOPEN_WORDS,
+)
+
 logger = logging.getLogger(__name__)
 
 # Path to schema.sql relative to this file (project root)
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
-
-# Known Jira "Done" category statuses — extend with your project's workflow.
-JIRA_DONE_STATUSES = {"Done", "Closed", "Resolved", "Complete", "Merged"}
-# Status words that signal a return to active work.
-REOPEN_WORDS = {"Reopened", "Reopen", "Return to Progress", "Back to In Progress"}
-# Status transitions that count as a code-review / merge gate.
-GATE_TRANSITIONS = {
-    "code review approved",
-    "review approved",
-    "ready for merge",
-    "ready to merge",
-    "approved",
-    "merged",
-    "mr merged",
-}
-# Jira field names that carry story-point estimates.
-POINTS_FIELD_NAMES = {"story points", "story point estimate", "estimate", "effort"}
 
 
 class Database:

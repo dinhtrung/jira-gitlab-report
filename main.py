@@ -46,7 +46,7 @@ async def fetch_jira_data(
     tool_names = {t.name for t in tools}
     logger.debug("Jira tools: %s", tool_names)
 
-    jql = f"updated >= '{start_date}' AND updated <= '{end_date}'"
+    jql = f"updated >= '{start_date}' AND updated <= '{end_date}' ORDER BY key ASC"
     if jql_extra:
         jql += f" AND {jql_extra}"
 
@@ -206,6 +206,9 @@ def render_markdown(report: SprintReport) -> str:
     for t in report.tickets:
         if t.detail:
             lines.append(f"- **{t.ticket_id}** ({t.flag}): {t.detail}")
+        if t.cycle_time_hours:
+            parts = [f"{s}: {h:.1f}h" for s, h in sorted(t.cycle_time_hours.items())]
+            lines.append(f"  ⏱ {', '.join(parts)}")
 
     return "\n".join(lines)
 
@@ -219,6 +222,61 @@ def _flag_icon(flag: str) -> str:
         "not-done": "⏳",
         "untouched": "⬜",
     }.get(flag, "❓")
+
+
+def render_csv(report: SprintReport) -> str:
+    """Produce a CSV sprint-performance table."""
+    import csv
+    import io
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["#", "Ticket", "Source", "Final Status", "Points", "Flag", "Regressions", "Cycle Time", "Detail"])
+    for idx, t in enumerate(report.tickets, start=1):
+        ct = "; ".join(f"{s}:{h:.1f}h" for s, h in sorted(t.cycle_time_hours.items()))
+        w.writerow([idx, t.ticket_id, t.source, t.final_status, t.points, t.flag, t.regression_count, ct, t.detail])
+    w.writerow([])
+    w.writerow(["Summary", "Value"])
+    w.writerow(["Total tickets", len(report.tickets)])
+    w.writerow(["Valid (points earned)", report.valid_count])
+    w.writerow(["In-Flight (0 pts)", report.in_flight_count])
+    w.writerow(["Regressed (0 pts)", report.regressed_count])
+    w.writerow(["Total regressions", report.total_regressions])
+    w.writerow(["Sprint Velocity", report.total_points])
+    return buf.getvalue()
+
+
+def render_json(report: SprintReport) -> str:
+    """Produce a JSON sprint-performance report."""
+    return json.dumps(
+        {
+            "sprint_name": report.sprint_name,
+            "start_date": report.start_date,
+            "end_date": report.end_date,
+            "tickets": [
+                {
+                    "ticket_id": t.ticket_id,
+                    "source": t.source,
+                    "final_status": t.final_status,
+                    "points": t.points,
+                    "flag": t.flag,
+                    "regression_count": t.regression_count,
+                    "cycle_time_hours": t.cycle_time_hours,
+                    "detail": t.detail,
+                }
+                for t in report.tickets
+            ],
+            "summary": {
+                "total_tickets": len(report.tickets),
+                "valid": report.valid_count,
+                "in_flight": report.in_flight_count,
+                "regressed": report.regressed_count,
+                "total_regressions": report.total_regressions,
+                "sprint_velocity": report.total_points,
+            },
+        },
+        indent=2,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -296,14 +354,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Reconcile from existing DB without re-fetching",
     )
     p.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         default="",
         help="Write report to file (default: stdout)",
     )
     p.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Verbose logging",
+    )
+    p.add_argument(
+        "-f",
+        "--format",
+        default="markdown",
+        choices=["markdown", "csv", "json"],
+        help="Output format (default: markdown)",
     )
     return p
 
@@ -329,13 +396,19 @@ async def async_main(args: argparse.Namespace) -> None:
     db.normalise()
     reconciler = Reconciler(db)
     report = reconciler.reconcile(args.start_date, args.end_date)
-    md = render_markdown(report)
+
+    if args.format == "csv":
+        out = render_csv(report)
+    elif args.format == "json":
+        out = render_json(report)
+    else:
+        out = render_markdown(report)
 
     if args.output:
-        Path(args.output).write_text(md, encoding="utf-8")
+        Path(args.output).write_text(out, encoding="utf-8")
         print(f"Report written to {args.output}")
     else:
-        print(md)
+        print(out)
 
     db.close()
 
