@@ -1,0 +1,68 @@
+# docker-compose.yml — Mock Jira & GitLab MCP servers for local sprint reporting.
+#
+# Bring up:
+#   docker compose up -d
+#
+# Test SSE endpoint:
+#   curl http://localhost:8080/sse   # Jira  (mcp-atlassian)
+#   curl http://localhost:8081/sse   # GitLab (gitlab-mcp)
+#
+# Then run the report engine:
+#   python main.py --start-date 2025-04-01 --end-date 2025-04-14
+
+services:
+
+  # ------------------------------------------------------------------
+  # Jira MCP — https://github.com/sooperset/mcp-atlassian
+  # SSE transport on port 8080, 72 tools available.
+  # Confluence env vars omitted → Confluence tools disable at startup.
+  # ------------------------------------------------------------------
+  jira-mcp:
+    image: ghcr.io/sooperset/mcp-atlassian:latest
+    container_name: jira-mcp
+    ports:
+      - "8080:9000"
+    environment:
+      # -- Atlassian credentials (redacted) --
+      JIRA_URL:             "https://CHANGE_ME.atlassian.net"
+      JIRA_USERNAME:        "CHANGE_ME@example.com"
+      JIRA_API_TOKEN:       "CHANGE_ME"
+      # Omit CONFLUENCE_* to keep only Jira tools.
+    command:
+      - "--transport=sse"
+      - "--port=9000"
+      - "-vv"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/sse || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ------------------------------------------------------------------
+  # GitLab MCP — https://github.com/zereight/gitlab-mcp
+  # SSE transport on port 8081, MR / issue / milestone / pipeline tools.
+  # ------------------------------------------------------------------
+  gitlab-mcp:
+    image: zereight050/gitlab-mcp:latest
+    container_name: gitlab-mcp
+    ports:
+      - "8081:3002"
+    environment:
+      # -- GitLab credentials (redacted) --
+      GITLAB_PERSONAL_ACCESS_TOKEN: "CHANGE_ME"
+      GITLAB_API_URL:              "https://CHANGE_ME.gitlab.com/api/v4"
+      # -- Transport --
+      SSE:   "true"
+      HOST:  "0.0.0.0"
+      # -- Toolset fine-tuning --
+      GITLAB_READ_ONLY_MODE: "true"   # Read-only = safe for reporting
+      USE_MILESTONE:         "true"   # Sprint / milestone data
+      USE_PIPELINE:          "true"   # CI/CD pipeline status
+      USE_GITLAB_WIKI:       "false"  # Not needed for sprint reports
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3002/sse || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
