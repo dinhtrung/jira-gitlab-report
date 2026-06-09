@@ -1,0 +1,352 @@
+"""
+main.py — CLI entry point for the Deterministic Sprint Reporting Engine.
+
+Usage::
+
+    python main.py \\
+        --start-date 2025-04-01 \\
+        --end-date   2025-04-14 \\
+        --jira-url   http://localhost:8080 \\
+        --gitlab-url http://localhost:8081 \\
+        --db         sprint_data.db
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import logging
+import sys
+from pathlib import Path
+from typing import Any
+
+from database import Database
+from reconciler import Reconciler, SprintReport
+from sse_client import MCPSession
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Data-fetch orchestration
+# ---------------------------------------------------------------------------
+
+
+async def fetch_jira_data(
+    jira: MCPSession,
+    db: Database,
+    start_date: str,
+    end_date: str,
+    jql_extra: str = "",
+) -> int:
+    """Query Jira for issues updated in the window and ingest their changelogs."""
+    logger.info("Fetching Jira data …")
+    tools = await jira.list_tools()
+    tool_names = {t.name for t in tools}
+    logger.debug("Jira tools: %s", tool_names)
+
+    jql = f"updated >= '{start_date}' AND updated <= '{end_date}'"
+    if jql_extra:
+        jql += f" AND {jql_extra}"
+
+    search_tool = _pick_tool(tool_names, ["search_issues", "jira_search_issues", "search"])
+
+    total = 0
+    start_at = 0
+    max_results = 50
+
+    while True:
+        args = {"jql": jql, "startAt": start_at, "maxResults": max_results, "expand": ["changelog"]}
+        result = await jira.call_tool(search_tool, args)
+        if result.is_error:
+            logger.error("Jira search error: %s", result.content)
+            break
+
+        data = _extract_json(result.content)
+        issues = data.get("issues", [])
+        if not issues:
+            break
+
+        db.parse_and_ingest_jira_search_result(issues)
+        total += len(issues)
+        start_at += max_results
+        if start_at >= data.get("total", 0):
+            break
+
+    logger.info("Ingested %d Jira issues", total)
+    return total
+
+
+async def fetch_gitlab_data(
+    gitlab: MCPSession,
+    db: Database,
+    start_date: str,
+    end_date: str,
+    project_id: int = 0,
+) -> int:
+    """Query GitLab for MRs updated in the window and ingest their state events."""
+    logger.info("Fetching GitLab data …")
+    tools = await gitlab.list_tools()
+    tool_names = {t.name for t in tools}
+    logger.debug("GitLab tools: %s", tool_names)
+
+    list_tool = _pick_tool(
+        tool_names, ["list_merge_requests", "gitlab_list_merge_requests", "search_merge_requests"]
+    )
+    detail_tool = _pick_tool(tool_names, ["get_merge_request", "gitlab_get_merge_request"])
+
+    list_args: dict = {
+        "updated_after": f"{start_date}T00:00:00Z",
+        "updated_before": f"{end_date}T23:59:59Z",
+        "state": "all",
+        "per_page": 100,
+    }
+    if project_id:
+        list_args["project_id"] = project_id
+
+    result = await gitlab.call_tool(list_tool, list_args)
+    if result.is_error:
+        logger.error("GitLab list error: %s", result.content)
+        return 0
+
+    mrs = _extract_json(result.content)
+    if isinstance(mrs, dict):
+        mrs = mrs.get("data", mrs.get("items", []))
+
+    if not isinstance(mrs, list):
+        logger.warning("Unexpected GitLab response shape: %s", type(mrs))
+        return 0
+
+    total = 0
+    for mr_summary in mrs:
+        mr_iid = mr_summary.get("iid")
+        if not mr_iid:
+            continue
+        pid = mr_summary.get("project_id", project_id)
+
+        detail_args: dict = {"merge_request_iid": mr_iid}
+        if pid:
+            detail_args["project_id"] = pid
+
+        detail = await gitlab.call_tool(detail_tool, detail_args)
+        if detail.is_error:
+            logger.warning("GitLab detail error for !%s: %s", mr_iid, detail.content)
+            db.parse_and_ingest_gitlab_mr_events([mr_summary], project_id=pid)
+            total += 1
+            continue
+
+        full_mr = _extract_json(detail.content)
+        if isinstance(full_mr, dict):
+            db.parse_and_ingest_gitlab_mr_events([full_mr], project_id=pid)
+            total += 1
+        elif isinstance(full_mr, list):
+            db.parse_and_ingest_gitlab_mr_events(full_mr, project_id=pid)
+            total += len(full_mr)
+
+    logger.info("Ingested %d GitLab MRs", total)
+    return total
+
+
+# ---------------------------------------------------------------------------
+# Markdown report renderer
+# ---------------------------------------------------------------------------
+
+
+def render_markdown(report: SprintReport) -> str:
+    """Produce a clean Markdown sprint-performance table."""
+
+    lines: list[str] = [
+        f"# Sprint Report — {report.sprint_name or 'Unnamed'}",
+        "",
+        f"**Period:** {report.start_date} → {report.end_date}",
+        "",
+        "| # | Ticket | Source | Final Status | Points | Flag |",
+        "|---|--------|--------|--------------|--------|------|",
+    ]
+
+    for idx, t in enumerate(report.tickets, start=1):
+        flag_icon = _flag_icon(t.flag)
+        lines.append(
+            f"| {idx} | `{t.ticket_id}` | {t.source} | {t.final_status} | "
+            f"{t.points} | {flag_icon} {t.flag} |"
+        )
+
+    lines += [
+        "",
+        "---",
+        "",
+        "## Summary",
+        "",
+        "| Metric | Value |",
+        "|--------|-------|",
+        f"| **Total tickets** | {len(report.tickets)} |",
+        f"| **Valid (points earned)** | {report.valid_count} |",
+        f"| **In-Flight (0 pts)** | {report.in_flight_count} |",
+        f"| **Regressed (0 pts)** | {report.regressed_count} |",
+        f"| **Sprint Velocity** | **{report.total_points}** |",
+        "",
+        "---",
+        "",
+        "## Details",
+        "",
+    ]
+
+    for t in report.tickets:
+        if t.detail:
+            lines.append(f"- **{t.ticket_id}** ({t.flag}): {t.detail}")
+
+    return "\n".join(lines)
+
+
+def _flag_icon(flag: str) -> str:
+    return {
+        "valid": "✅",
+        "in-flight": "🔄",
+        "regressed": "❌",
+        "no-gate": "⚠️",
+        "not-done": "⏳",
+        "untouched": "⬜",
+    }.get(flag, "❓")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _pick_tool(available: set[str], candidates: list[str]) -> str:
+    for name in candidates:
+        if name in available:
+            return name
+    if available:
+        return next(iter(available))
+    raise RuntimeError("No tools available on the MCP server")
+
+
+def _extract_json(content: list[dict]) -> Any:
+    """Unpack an MCP tool call result into a Python object."""
+    for block in content:
+        if block.get("type") == "text":
+            raw: str = block.get("text", "")
+            if not raw:
+                continue
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return raw
+        if block.get("type") == "resource":
+            resource: dict = block.get("resource", {})
+            raw = resource.get("text", resource.get("blob", ""))
+            if isinstance(raw, str):
+                try:
+                    return json.loads(raw)
+                except json.JSONDecodeError:
+                    return raw
+            return raw
+    return {}
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="sprint-report",
+        description="Deterministic Sprint Reporting Engine",
+    )
+    p.add_argument("--start-date", required=True, help="Sprint start (YYYY-MM-DD)")
+    p.add_argument("--end-date", required=True, help="Sprint end (YYYY-MM-DD)")
+    p.add_argument(
+        "--jira-url",
+        default="http://localhost:8080",
+        help="MCP SSE endpoint for Jira server",
+    )
+    p.add_argument(
+        "--gitlab-url",
+        default="http://localhost:8081",
+        help="MCP SSE endpoint for GitLab server",
+    )
+    p.add_argument(
+        "--db",
+        default="sprint_data.db",
+        help="Path to SQLite database (default: sprint_data.db)",
+    )
+    p.add_argument(
+        "--fetch-only",
+        action="store_true",
+        help="Fetch data without reconciling",
+    )
+    p.add_argument(
+        "--reconcile-only",
+        action="store_true",
+        help="Reconcile from existing DB without re-fetching",
+    )
+    p.add_argument(
+        "-o", "--output",
+        default="",
+        help="Write report to file (default: stdout)",
+    )
+    p.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Verbose logging",
+    )
+    return p
+
+
+async def async_main(args: argparse.Namespace) -> None:
+    db = Database(args.db)
+    db.init()
+
+    if not args.reconcile_only:
+        async with MCPSession(args.jira_url) as jira_session:
+            await jira_session.initialize()
+            await fetch_jira_data(jira_session, db, args.start_date, args.end_date)
+
+        async with MCPSession(args.gitlab_url) as gitlab_session:
+            await gitlab_session.initialize()
+            await fetch_gitlab_data(gitlab_session, db, args.start_date, args.end_date)
+
+    if args.fetch_only:
+        logger.info("Fetch-only mode — skipping reconciliation.")
+        db.close()
+        return
+
+    db.normalise()
+    reconciler = Reconciler(db)
+    report = reconciler.reconcile(args.start_date, args.end_date)
+    md = render_markdown(report)
+
+    if args.output:
+        Path(args.output).write_text(md, encoding="utf-8")
+        print(f"Report written to {args.output}")
+    else:
+        print(md)
+
+    db.close()
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    try:
+        asyncio.run(async_main(args))
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        sys.exit(130)
+    except Exception:
+        logger.exception("Fatal error")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
