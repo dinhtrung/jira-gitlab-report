@@ -1,0 +1,103 @@
+[
+  {
+    "id": "559806",
+    "key": "PROJ-653",
+    "summary": "Example summary for redaction",
+    "description": "Example description for redaction",
+    "status": {
+      "name": "To Do",
+      "category": "In Progress",
+      "color": "inprogress"
+    },
+    "issue_type": {
+      "name": "Story"
+    },
+    "priority": {
+      "name": "Not defined"
+    },
+    "assignee": {
+      "display_name": "User A",
+      "name": "user.a",
+      "email": "user.a@example.com",
+      "avatar_url": "https://jira.example.com/avatar/user.a",
+      "key": "JIRAUSER10001"
+    },
+    "reporter": {
+      "display_name": "User B",
+      "name": "user.b",
+      "email": "user.b@example.com",
+      "avatar_url": "https://jira.example.com/avatar/user.b",
+      "key": "JIRAUSER10002"
+    },
+    "created": "2026-06-08T16:42:02.000+0200",
+    "updated": "2026-06-09T08:46:01.000+0200",
+    "changelogs": [
+      {
+        "items": [
+          {
+            "field": "Rang",
+            "fieldtype": "custom",
+            "from_string": "",
+            "to_string": "Ranked higher",
+            "from_id": "",
+            "to_id": ""
+          }
+        ],
+        "author": {
+          "display_name": "User B",
+          "name": "user.b"
+        },
+        "created": "2026-06-08T16:42:03.452000+02:00"
+      },
+      {
+        "items": [
+          {
+            "field": "Sprint",
+            "fieldtype": "custom",
+            "to_string": "Example Sprint",
+            "to_id": "4957"
+          }
+        ],
+        "author": {
+          "display_name": "User B",
+          "name": "user.b"
+        },
+        "created": "2026-06-08T16:42:07.201000+02:00"
+      },
+      {
+        "items": [
+          {
+            "field": "Story Points",
+            "fieldtype": "custom",
+            "from_string": null,
+            "to_string": "5",
+            "from_id": null,
+            "to_id": null
+          }
+        ],
+        "author": {
+          "display_name": "User B",
+          "name": "user.b"
+        },
+        "created": "2026-06-08T16:43:00.000+02:00"
+      },
+      {
+        "items": [
+          {
+            "field": "status",
+            "fieldtype": "jira",
+            "from_string": "To Do",
+            "to_string": "In Progress",
+            "from_id": "1",
+            "to_id": "3"
+          }
+        ],
+        "author": {
+          "display_name": "User A",
+          "name": "user.a"
+        },
+        "created": "2026-06-09T08:46:01.538000+02:00"
+      }
+    ]
+  }
+]

@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS raw_jira_events (
     to_value TEXT,
     timestamp TEXT NOT NULL,
     author TEXT,
+    author_email TEXT,
     sprint_name TEXT,
     ingested_at TEXT DEFAULT (datetime('now'))
 );
@@ -25,7 +26,9 @@ CREATE TABLE IF NOT EXISTS raw_gitlab_events (
     to_state TEXT,
     timestamp TEXT NOT NULL,
     author TEXT,
+    author_username TEXT,
     milestone TEXT,
+    title TEXT,
     ingested_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -51,6 +54,7 @@ CREATE TABLE IF NOT EXISTS ticket_history (
     points REAL DEFAULT 0,
     sprint_name TEXT,
     author TEXT,
+    author_id TEXT,             -- username or email
     event_ts TEXT NOT NULL,           -- ISO-8601 timestamp
     ingested_at TEXT DEFAULT (datetime('now'))
 );

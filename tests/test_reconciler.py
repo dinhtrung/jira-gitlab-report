@@ -51,3 +51,55 @@ def test_reconciler_regression_logic(db):
     assert report.tickets[0].flag == 'regressed'
     assert report.tickets[0].points == 0.0
     assert report.tickets[0].regression_count == 1
+
+def test_reconciler_author_filter(db):
+    # User A worked on PROJ-1
+    db.conn.execute("""
+        INSERT INTO ticket_history (ticket_id, source, event_type, points, event_ts, new_status, author_id)
+        VALUES ('PROJ-1', 'jira', 'points_assigned', 3, '2025-01-01T10:00:00Z', 'In Progress', 'user.a')
+    """)
+    # User B worked on PROJ-2
+    db.conn.execute("""
+        INSERT INTO ticket_history (ticket_id, source, event_type, points, event_ts, new_status, author_id)
+        VALUES ('PROJ-2', 'jira', 'points_assigned', 5, '2025-01-01T11:00:00Z', 'In Progress', 'user.b')
+    """)
+
+    reconciler = Reconciler(db)
+
+    # Filter by user.a
+    report_a = reconciler.reconcile('2025-01-01', '2025-01-02', author_id='user.a')
+    assert len(report_a.tickets) == 1
+    assert report_a.tickets[0].ticket_id == 'PROJ-1'
+
+    # Filter by user.b
+    report_b = reconciler.reconcile('2025-01-01', '2025-01-02', author_id='user.b')
+    assert len(report_b.tickets) == 1
+    assert report_b.tickets[0].ticket_id == 'PROJ-2'
+
+    # Filter by unknown user
+    report_c = reconciler.reconcile('2025-01-01', '2025-01-02', author_id='user.c')
+    assert len(report_c.tickets) == 0
+
+def test_reconciler_author_gitlab_match(db):
+    # GitLab MR created by user.b before the window, but merged during the window
+    db.conn.execute("""
+        INSERT INTO ticket_history (ticket_id, source, event_type, points, event_ts, new_status, author_id)
+        VALUES ('PROJ-123', 'gitlab', 'created', 0, '2024-12-31T20:00:00Z', 'opened', 'user.b')
+    """)
+    db.conn.execute("""
+        INSERT INTO ticket_history (ticket_id, source, event_type, points, event_ts, new_status, author_id)
+        VALUES ('PROJ-123', 'gitlab', 'mr_merged', 0, '2025-01-01T10:00:00Z', 'merged', 'user.a')
+    """)
+    db.conn.execute("""
+        INSERT INTO ticket_history (ticket_id, source, event_type, points, event_ts, new_status, author_id)
+        VALUES ('PROJ-123', 'jira', 'points_assigned', 5, '2024-12-31T20:00:00Z', 'In Progress', 'user.a')
+    """)
+
+    reconciler = Reconciler(db)
+
+    # Filter by user.b (the implementer)
+    report_b = reconciler.reconcile('2025-01-01', '2025-01-02', author_id='user.b')
+    assert len(report_b.tickets) == 1
+    assert report_b.tickets[0].ticket_id == 'PROJ-123'
+    assert report_b.tickets[0].flag == 'valid'
+    assert report_b.tickets[0].points == 5.0

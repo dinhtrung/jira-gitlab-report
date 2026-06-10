@@ -114,3 +114,6 @@ transitions.
 Same raw data + same date range = same output every time. Reports are
 cached in the `sprint_report` table so re-runs with `--reconcile-only`
 hit the DB without touching MCP servers.
+
+
+ read_api, read_repository, read_user, write_repository

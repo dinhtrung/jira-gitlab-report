@@ -101,13 +101,23 @@ class Reconciler:
     def __init__(self, db: Database) -> None:
         self.db = db
 
-    def reconcile(self, start_date: str, end_date: str) -> SprintReport:
+    def reconcile(
+        self, start_date: str, end_date: str, author_id: str | None = None
+    ) -> SprintReport:
         """Run the full reconciliation for a date range.
 
         Returns a SprintReport suitable for Markdown rendering.
         """
         tickets = self.db.get_tickets_in_range(start_date, end_date)
-        logger.info("Reconciling %d tickets for [%s … %s]", len(tickets), start_date, end_date)
+        if author_id:
+            logger.info(
+                "Reconciling tickets for author '%s' in range [%s … %s]",
+                author_id,
+                start_date,
+                end_date,
+            )
+        else:
+            logger.info("Reconciling %d tickets for [%s … %s]", len(tickets), start_date, end_date)
 
         verdicts: list[TicketVerdict] = []
         for tkt in tickets:
@@ -116,6 +126,34 @@ class Reconciler:
             sprint_name = tkt.get("sprint_name", "") or ""
 
             timeline = self.db.get_ticket_timeline(ticket_id)
+
+            # If author filter is active, skip tickets where the author did not contribute in range
+            if author_id:
+                # Jira author_id is email or name, GitLab author_id is username.
+                # In GitLab events, the implementing author is the MR author.
+                author_contributed = any(
+                    e["author_id"] == author_id
+                    for e in timeline
+                    if (start_date <= e["event_ts"] <= end_date) or (e["source"] == "gitlab")
+                )
+
+                # Refined logic: If the ticket has GitLab events, the author who created the MR
+                # is considered the implementer.
+                gitlab_author_match = any(
+                    e["source"] == "gitlab" and e["event_type"] == "created" and e["author_id"] == author_id
+                    for e in timeline
+                )
+
+                # Jira contribution in range
+                jira_contribution = any(
+                    e["source"] == "jira" and e["author_id"] == author_id
+                    and start_date <= e["event_ts"] <= end_date
+                    for e in timeline
+                )
+
+                if not (gitlab_author_match or jira_contribution):
+                    continue
+
             verdict = self._judge(ticket_id, source, timeline, start_date, end_date)
 
             self.db.upsert_report_row(

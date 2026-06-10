@@ -1,0 +1,43 @@
+[
+  {
+    "id": 998811,
+    "iid": 42,
+    "project_id": 13,
+    "title": "Resolve PROJ-653: Add Feature X",
+    "description": "Resolves Jira ticket PROJ-653",
+    "state": "merged",
+    "created_at": "2026-06-08T17:00:00Z",
+    "merged_at": "2026-06-09T09:30:00Z",
+    "author": {
+      "name": "User A",
+      "username": "user.a"
+    },
+    "merged_by": {
+      "name": "User B",
+      "username": "user.b"
+    },
+    "milestone": {
+      "title": "Sprint 42"
+    },
+    "resource_state_events": [
+      {
+        "id": 111,
+        "from_state": "opened",
+        "to_state": "opened",
+        "created_at": "2026-06-08T17:00:00Z",
+        "user": {
+          "name": "User A"
+        }
+      },
+      {
+        "id": 112,
+        "from_state": "opened",
+        "to_state": "merged",
+        "created_at": "2026-06-09T09:30:00Z",
+        "user": {
+          "name": "User B"
+        }
+      }
+    ]
+  }
+]

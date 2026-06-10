@@ -92,7 +92,7 @@ class MCPSession:
 
     # -- context manager ---------------------------------------------------
 
-    async def __aenter__(self) -> "MCPSession":
+    async def __aenter__(self) -> MCPSession:
         await self.connect()
         return self
 
@@ -180,7 +180,8 @@ class MCPSession:
 
     async def list_tools(self) -> list[MCPTool]:
         """Return every tool advertised by the server."""
-        result = await self._send_request("tools/list")
+        response = await self._send_request("tools/list")
+        result = response.get("result", {})
         tools: list[MCPTool] = []
         for raw in result.get("tools", []):
             tools.append(
@@ -194,9 +195,10 @@ class MCPSession:
 
     async def call_tool(self, name: str, arguments: dict | None = None) -> ToolCallResult:
         """Invoke a named tool with keyword arguments."""
-        result = await self._send_request(
+        response = await self._send_request(
             "tools/call", {"name": name, "arguments": arguments or {}}
         )
+        result = response.get("result", {})
         content = result.get("content", [])
         is_error = result.get("isError", False)
         return ToolCallResult(content=content, is_error=is_error)

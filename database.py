@@ -10,7 +10,9 @@ Provides:
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -69,13 +71,14 @@ class Database:
         to_value: str | None,
         timestamp: str,
         author: str = "",
+        author_email: str = "",
         sprint_name: str = "",
     ) -> int:
         cur = self.conn.execute(
             """INSERT INTO raw_jira_events (issue_key, field, from_value, to_value,
-               timestamp, author, sprint_name)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (issue_key, field, from_value, to_value, timestamp, author, sprint_name),
+               timestamp, author, author_email, sprint_name)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (issue_key, field, from_value, to_value, timestamp, author, author_email, sprint_name),
         )
         self.conn.commit()
         assert cur.lastrowid is not None
@@ -88,15 +91,27 @@ class Database:
         count = 0
         for entry in changelog_items:
             created = entry.get("created", "")
-            author = (entry.get("author") or {}).get("displayName", "")
+            author_obj = entry.get("author") or {}
+            author = author_obj.get("displayName") or author_obj.get("display_name", "")
+            author_email = (
+                author_obj.get("emailAddress")
+                or author_obj.get("email")
+                or author_obj.get("name")
+                or ""
+            )
             for item in entry.get("items", []):
+                from_value = (
+                    item.get("fromString") if "fromString" in item else item.get("from_string")
+                )
+                to_value = item.get("toString") if "toString" in item else item.get("to_string")
                 self.insert_raw_jira_event(
                     issue_key=issue_key,
                     field=item.get("field", ""),
-                    from_value=item.get("fromString"),
-                    to_value=item.get("toString"),
+                    from_value=from_value,
+                    to_value=to_value,
                     timestamp=created,
                     author=author,
+                    author_email=author_email,
                     sprint_name=sprint_name,
                 )
                 count += 1
@@ -106,18 +121,22 @@ class Database:
         """Process a Jira search result with embedded changelog data.
 
         Each issue dict is expected to carry ``changelog`` under its
-        ``_changelog`` or ``changelog`` key after an ``expand=changelog`` request.
+        ``_changelog`` or ``changelog`` key after an ``expand=changelog`` request,
+        or as a top-level list of ``changelogs``.
         """
         count = 0
         for issue in issues:
             key = issue.get("key", "")
             fields = issue.get("fields", {})
-            changelog = (
-                issue.get("changelog", {})
-                or issue.get("_changelog", {})
-                or fields.get("changelog", {})
-            )
-            histories = changelog.get("histories", []) if isinstance(changelog, dict) else []
+            if "changelogs" in issue:
+                histories = issue["changelogs"]
+            else:
+                changelog = (
+                    issue.get("changelog", {})
+                    or issue.get("_changelog", {})
+                    or fields.get("changelog", {})
+                )
+                histories = changelog.get("histories", []) if isinstance(changelog, dict) else []
             count += self.parse_and_ingest_jira_changelog(key, histories, sprint_name=sprint_name)
         return count
 
@@ -132,13 +151,26 @@ class Database:
         to_state: str | None,
         timestamp: str,
         author: str = "",
+        author_username: str = "",
         milestone: str = "",
+        title: str = "",
     ) -> int:
         cur = self.conn.execute(
             """INSERT INTO raw_gitlab_events (mr_iid, project_id, action, from_state,
-               to_state, timestamp, author, milestone)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (mr_iid, project_id, action, from_state, to_state, timestamp, author, milestone),
+               to_state, timestamp, author, author_username, milestone, title)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                mr_iid,
+                project_id,
+                action,
+                from_state,
+                to_state,
+                timestamp,
+                author,
+                author_username,
+                milestone,
+                title,
+            ),
         )
         self.conn.commit()
         assert cur.lastrowid is not None
@@ -155,6 +187,7 @@ class Database:
         for mr in mrs:
             mr_iid = mr.get("iid", 0)
             pid = mr.get("project_id", project_id)
+            title = mr.get("title", "")
             self.insert_raw_gitlab_event(
                 mr_iid=mr_iid,
                 project_id=pid,
@@ -163,7 +196,9 @@ class Database:
                 to_state=mr.get("state", "opened"),
                 timestamp=mr.get("created_at", ""),
                 author=(mr.get("author") or {}).get("name", ""),
+                author_username=(mr.get("author") or {}).get("username", ""),
                 milestone=milestone or (mr.get("milestone") or {}).get("title", ""),
+                title=title,
             )
             count += 1
             for ev in mr.get("resource_state_events", []):
@@ -175,7 +210,9 @@ class Database:
                     to_state=ev.get("to_state"),
                     timestamp=ev.get("created_at", ""),
                     author=(ev.get("user") or {}).get("name", ""),
+                    author_username=(ev.get("user") or {}).get("username", ""),
                     milestone=milestone,
+                    title=title,
                 )
                 count += 1
             if mr.get("merged_at"):
@@ -187,7 +224,9 @@ class Database:
                     to_state="merged",
                     timestamp=mr["merged_at"],
                     author=(mr.get("merged_by") or {}).get("name", ""),
+                    author_username=(mr.get("merged_by") or {}).get("username", ""),
                     milestone=milestone,
+                    title=title,
                 )
                 count += 1
         return count
@@ -209,15 +248,13 @@ class Database:
             etype, old_s, new_s = _classify_jira_event(r["field"], r["from_value"], r["to_value"])
             pts = 0.0
             if etype == "points_assigned" and new_s:
-                try:
+                with contextlib.suppress(ValueError, TypeError):
                     pts = float(new_s)
-                except (ValueError, TypeError):
-                    pass
             self.conn.execute(
                 """INSERT INTO ticket_history
                    (ticket_id, source, event_type, old_status, new_status,
-                    points, sprint_name, author, event_ts)
-                   VALUES (?, 'jira', ?, ?, ?, ?, ?, ?, ?)""",
+                    points, sprint_name, author, author_id, event_ts)
+                   VALUES (?, 'jira', ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     r["issue_key"],
                     etype,
@@ -226,6 +263,7 @@ class Database:
                     pts,
                     r["sprint_name"],
                     r["author"],
+                    r["author_email"],
                     r["timestamp"],
                 ),
             )
@@ -238,13 +276,30 @@ class Database:
             etype, old_s, new_s = _classify_gitlab_event(
                 r["action"], r["from_state"], r["to_state"]
             )
+
+            # Link to Jira ticket if found in title
             ticket_id = f"!{r['mr_iid']}"
+            if r["title"]:
+                # Matches patterns like OCTD-123 (uppercase letters + hyphen + numbers)
+                match = re.search(r"([A-Z]+-\d+)", r["title"])
+                if match:
+                    ticket_id = match.group(1)
+
             self.conn.execute(
                 """INSERT INTO ticket_history
                    (ticket_id, source, event_type, old_status, new_status,
-                    points, sprint_name, author, event_ts)
-                   VALUES (?, 'gitlab', ?, ?, ?, 0, ?, ?, ?)""",
-                (ticket_id, etype, old_s, new_s, r["milestone"], r["author"], r["timestamp"]),
+                    points, sprint_name, author, author_id, event_ts)
+                   VALUES (?, 'gitlab', ?, ?, ?, 0, ?, ?, ?, ?)""",
+                (
+                    ticket_id,
+                    etype,
+                    old_s,
+                    new_s,
+                    r["milestone"],
+                    r["author"],
+                    r["author_username"],
+                    r["timestamp"],
+                ),
             )
             count += 1
         self.conn.commit()
@@ -340,6 +395,11 @@ def _classify_jira_event(
             return ("code_review_approved", from_s, to_s)
         if to_val and any(w.lower() in to_l for w in REOPEN_WORDS):
             return ("reopened", from_s, to_s)
+        # Check for regression from Review to In Progress
+        if from_val and to_val:
+            from_l = str(from_val).lower()
+            if "review" in from_l and "progress" in to_l:
+                return ("returned_to_progress", from_s, to_s)
         return ("status_change", from_s, to_s)
     if field_l in ("resolution",) and to_s in JIRA_DONE_STATUSES:
         return ("status_change", from_s, to_s)

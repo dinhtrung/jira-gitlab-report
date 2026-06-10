@@ -50,14 +50,39 @@ async def fetch_jira_data(
     if jql_extra:
         jql += f" AND {jql_extra}"
 
-    search_tool = _pick_tool(tool_names, ["search_issues", "jira_search_issues", "search"])
+    search_tool = _pick_tool(
+        tool_names, ["jira_search", "search_issues", "jira_search_issues", "search"]
+    )
 
     total = 0
     start_at = 0
     max_results = 50
 
     while True:
-        args = {"jql": jql, "startAt": start_at, "maxResults": max_results, "expand": ["changelog"]}
+        tool_obj = next((t for t in tools if t.name == search_tool), None)
+        input_schema = tool_obj.input_schema if tool_obj else {}
+        properties = input_schema.get("properties", {})
+
+        args: dict[str, Any] = {"jql": jql}
+        if "start_at" in properties:
+            args["start_at"] = start_at
+        else:
+            args["startAt"] = start_at
+
+        if "limit" in properties:
+            args["limit"] = max_results
+        elif "maxResults" in properties:
+            args["maxResults"] = max_results
+        else:
+            args["limit"] = max_results
+
+        if "expand" in properties:
+            prop_type = properties["expand"].get("type", "string")
+            if prop_type == "array":
+                args["expand"] = ["changelog"]
+            else:
+                args["expand"] = "changelog"
+
         result = await jira.call_tool(search_tool, args)
         if result.is_error:
             logger.error("Jira search error: %s", result.content)
@@ -70,8 +95,12 @@ async def fetch_jira_data(
 
         db.parse_and_ingest_jira_search_result(issues)
         total += len(issues)
-        start_at += max_results
-        if start_at >= data.get("total", 0):
+
+        returned_total = data.get("total", 0)
+        actual_start_at = data.get("start_at", data.get("startAt", start_at))
+        start_at = actual_start_at + len(issues)
+
+        if start_at >= returned_total:
             break
 
     logger.info("Ingested %d Jira issues", total)
@@ -96,6 +125,11 @@ async def fetch_gitlab_data(
     )
     detail_tool = _pick_tool(tool_names, ["get_merge_request", "gitlab_get_merge_request"])
 
+    list_tool_obj = next((t for t in tools if t.name == list_tool), None)
+    list_input_schema = list_tool_obj.input_schema if list_tool_obj else {}
+    list_properties = list_input_schema.get("properties", {})
+    list_pid_type = list_properties.get("project_id", {}).get("type", "string")
+
     list_args: dict = {
         "updated_after": f"{start_date}T00:00:00Z",
         "updated_before": f"{end_date}T23:59:59Z",
@@ -103,7 +137,10 @@ async def fetch_gitlab_data(
         "per_page": 100,
     }
     if project_id:
-        list_args["project_id"] = project_id
+        if list_pid_type == "string":
+            list_args["project_id"] = str(project_id)
+        else:
+            list_args["project_id"] = project_id
 
     result = await gitlab.call_tool(list_tool, list_args)
     if result.is_error:
@@ -121,14 +158,30 @@ async def fetch_gitlab_data(
     total = 0
     semaphore = asyncio.Semaphore(8)  # max concurrent MR detail fetches
 
+    # Check detail tool parameters
+    detail_tool_obj = next((t for t in tools if t.name == detail_tool), None)
+    detail_input_schema = detail_tool_obj.input_schema if detail_tool_obj else {}
+    detail_properties = detail_input_schema.get("properties", {})
+    iid_type = detail_properties.get("merge_request_iid", {}).get("type", "string")
+    pid_type = detail_properties.get("project_id", {}).get("type", "string")
+
     async def _fetch_one_mr(mr_summary: dict) -> int:
         mr_iid = mr_summary.get("iid")
         if not mr_iid:
             return 0
         pid = mr_summary.get("project_id", project_id)
-        detail_args: dict = {"merge_request_iid": mr_iid}
+
+        detail_args: dict[str, Any] = {}
+        if iid_type == "string":
+            detail_args["merge_request_iid"] = str(mr_iid)
+        else:
+            detail_args["merge_request_iid"] = mr_iid
+
         if pid:
-            detail_args["project_id"] = pid
+            if pid_type == "string":
+                detail_args["project_id"] = str(pid)
+            else:
+                detail_args["project_id"] = pid
 
         async with semaphore:
             detail = await gitlab.call_tool(detail_tool, detail_args)
@@ -400,6 +453,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["markdown", "csv", "json"],
         help="Output format (default: markdown)",
     )
+    p.add_argument(
+        "--author",
+        default="",
+        help="Filter report by author (username or email)",
+    )
     return p
 
 
@@ -423,7 +481,7 @@ async def async_main(args: argparse.Namespace) -> None:
 
     db.normalise()
     reconciler = Reconciler(db)
-    report = reconciler.reconcile(args.start_date, args.end_date)
+    report = reconciler.reconcile(args.start_date, args.end_date, author_id=args.author or None)
 
     if args.format == "csv":
         out = render_csv(report)

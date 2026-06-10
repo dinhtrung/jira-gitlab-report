@@ -25,6 +25,10 @@ jira-gitlab-report/
 
 - **SQLite for persistence** — enables repeatable, deterministic re-runs
   without re-fetching from MCP servers.
+- **uv for dependency management** — ensures fast, reliable, and reproducible
+  environments via `pyproject.toml` and `uv.lock`.
+- **Ruff for linting** — maintains code quality with high-performance linting
+  and formatting.
 - **State-machine reconciler** — `reconciler.py::Reconciler._judge()` applies
   rules in a fixed order so the same input always yields the same output.
 - **MCP SSE transport** — `sse_client.py::MCPSession` implements the
@@ -56,9 +60,22 @@ For each ticket within `--start-date` … `--end-date`:
 ## Running
 
 ```bash
-python main.py --start-date 2025-04-01 --end-date 2025-04-14 \
+uv run python main.py --start-date 2025-04-01 --end-date 2025-04-14 \
     --jira-url http://localhost:8080 --gitlab-url http://localhost:8081
 ```
 
 Modes: `--fetch-only` (ingest only), `--reconcile-only` (from existing DB),
 `-o report.md` (write to file).
+
+## Development
+
+```bash
+# Install dependencies
+uv sync
+
+# Run tests
+uv run pytest
+
+# Lint code
+uv run ruff check .
+```
